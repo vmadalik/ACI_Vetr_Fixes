@@ -25,7 +25,7 @@ This repository is a list of scripts that can be used to fix various issues iden
  4. If not enabled, prompts the user to enable it.
  5. Enables Rogue Endpoint Control if the user agrees.
 
-# 4. Gloabl - Enable Port tracking.
+# 4. Global - Enable Port tracking.
 # Flow of code:
  1. Ensure Port Tracking is enabled in Global Fabric Policies
  2. If not enabled, prompt the user to enable it
