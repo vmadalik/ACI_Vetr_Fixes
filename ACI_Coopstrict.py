@@ -1,21 +1,27 @@
-##################
-# Access Policy -- Enabling MCP
+"""ACI COOP Strict Mode helper.
+
+Reads fabric credentials from CSV, logs in to each APIC, checks COOP strict
+policy, and optionally enables it when disabled.
+"""
+
+######################################
+# ACI COOP Strict Mode Script
 # Flow of the code is as follows:
-# 1. Login to APIC and get a token.
-# 2. Check if MCP Instance Policy 'default' is enabled in Global Fabric Policies.
-# 3. If not enabled, prompt user to enable it.
-###################
-
-
+# 1. Reads a CSV file containing multiple ACI fabric credentials.
+# 2. Logs into each fabric using the provided credentials.
+# 3. Checks if COOP Strict Mode is enabled in Global Fabric Policies.
+# 4. If not enabled, prompts the user to enable it.
+# 5. Enables COOP Strict Mode if the user agrees.
+########################################
 import requests
 import urllib3
 import csv
 import os
 
-# Disable warnings for self-signed certificates
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 def read_fabric_credentials(csv_path):
+    """Load APIC URL/username/password entries from a CSV file."""
     fabrics = []
     with open(csv_path, newline='') as csvfile:
         reader = csv.DictReader(csvfile)
@@ -28,6 +34,7 @@ def read_fabric_credentials(csv_path):
     return fabrics
 
 def login(APIC_URL, USERNAME, PASSWORD):
+    """Authenticate to APIC and return the session token."""
     url = f"{APIC_URL}/api/aaaLogin.json"
     payload = {
         "aaaUser": {
@@ -42,42 +49,42 @@ def login(APIC_URL, USERNAME, PASSWORD):
     token = response.json()['imdata'][0]['aaaLogin']['attributes']['token']
     return token
 
-def ensure_mcp_instance_policy_enabled(APIC_URL, token):
-    url = f"{APIC_URL}/api/mo/uni/infra/mcpInstP-default.json"
+def ensure_coop_strict_enabled(APIC_URL, token):
+    """Check COOP strict policy and optionally enable it."""
+    url = f"{APIC_URL}/api/mo/uni/fabric/pol-default.json"
     headers = {"Cookie": f"APIC-cookie={token}"}
     response = requests.get(url, headers=headers, verify=False)
     response.raise_for_status()
     data = response.json()
     enabled = False
     if data.get('imdata'):
-        attrs = data['imdata'][0]['mcpInstPol']['attributes']
-        if attrs.get('adminSt', '').lower() == 'enabled':
+        attrs = data['imdata'][0]['coopPol']['attributes']
+        if attrs.get('type', '').lower() == 'strict':
             enabled = True
     if not enabled:
-        print("WARNING: MCP Instance Policy 'default' is not enabled in Global Fabric Policies.")
-        choice = input("Do you want to enable MCP Instance Policy 'default'? (y/n): ")
+        print("COOP Strict Mode is not enabled.")
+        choice = input("Do you want to enable COOP Strict Mode? (y/n): ")
         if choice.strip().lower() == 'y':
             payload = {
-                "mcpInstPol": {
+                "coopPol": {
                     "attributes": {
-                        "dn": "uni/fabric/mcpInstPol-default",
-                        "name": "default",
-                        "adminSt": "enabled",
+                        "dn": "uni/fabric/pol-default",
+                        "type": "strict",
                         "status": "modified"
                     }
                 }
             }
-            post_url = f"{APIC_URL}/api/mo/uni/fabric/mcpInstPol-default.json"
+            post_url = f"{APIC_URL}/api/mo/uni/fabric/pol-default.json"
             post_response = requests.post(post_url, json=payload, headers=headers, verify=False)
             post_response.raise_for_status()
-            print("MCP Instance Policy 'default' enabled.")
+            print("COOP Strict Mode enabled.")
         else:
-            print("MCP Instance Policy 'default' not enabled. Exiting.")
-            exit(1)
+            print("COOP Strict Mode not enabled. Skipping this fabric.")
     else:
-        print("MCP Instance Policy 'default' is already enabled.")
+        print("COOP Strict Mode is already enabled.")
 
 def main():
+    """Entry point for prompting and processing fabrics."""
     # Default to creds.csv in the same directory
     default_csv = os.path.join(os.path.dirname(__file__), 'creds.csv')
     csv_path = input(f"Enter path to CSV file with fabric credentials (default: {default_csv}): ").strip()
@@ -103,8 +110,7 @@ def main():
         except Exception as e:
             print(f"Login failed for {APIC_URL}: {e}")
             continue
-        
-        ensure_mcp_instance_policy_enabled(APIC_URL, token)
+        ensure_coop_strict_enabled(APIC_URL, token)
 
 if __name__ == "__main__":
     main()

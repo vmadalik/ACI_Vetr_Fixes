@@ -5,13 +5,12 @@
 # 2. List all policy group names in the fabric and prompt user to choose one or more.
 # 3. Create a fabric node control policy to enable DOM if it doesn't exist.
 # 4. Associate the created policy to the selected policy groups.
-# 5. (Optional) Associate the policy group to a specific leaf switch (example for leaf 103).
 ###################
-
 
 import requests
 import urllib3
 import csv
+import os
 
 # Disable warnings for self-signed certificates
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -117,61 +116,6 @@ def associate_policy_to_group(APIC_URL, token, policy_name, group_name):
     print(f"Policy '{policy_name}' associated to policy group '{group_name}'.")
 
 
-# Associate policy group to a leaf switch (example for leaf 103)
-'''
-def associate_group_to_switch(token, group_name, leaf_id):
-    url = f"{APIC_URL}/api/mo/uni/fabric/leprof-leafSwitchProfile.json"
-    headers = {"Cookie": f"APIC-cookie={token}"}
-    payload = {
-        "fabricLeafP": {
-            "attributes": {
-                "dn": "uni/fabric/leprof-leafSwitchProfile",
-                "name": "leafSwitchProfile",
-                "rn": "leprof-leafSwitchProfile",
-                "status": "created,modified"
-            },
-            "children": [
-                {
-                    "fabricLeafS": {
-                        "attributes": {
-                            "dn": f"uni/fabric/leprof-leafSwitchProfile/leaves-test-typ-range",
-                            "type": "range",
-                            "name": "test",
-                            "rn": "leaves-test-typ-range",
-                            "status": "created,modified"
-                        },
-                        "children": [
-                            {
-                                "fabricNodeBlk": {
-                                    "attributes": {
-                                        "dn": f"uni/fabric/leprof-leafSwitchProfile/leaves-test-typ-range/nodeblk-{leaf_id:08x}",
-                                        "from_": str(leaf_id),
-                                        "to_": str(leaf_id),
-                                        "name": f"{leaf_id:08x}",
-                                        "rn": f"nodeblk-{leaf_id:08x}",
-                                        "status": "created,modified"
-                                    }
-                                }
-                            },
-                            {
-                                "fabricRsLeNodePGrp": {
-                                    "attributes": {
-                                        "tDn": f"uni/fabric/funcprof/lenodepgrp-{group_name}",
-                                        "status": "created"
-                                    }
-                                }
-                            }
-                        ]
-                    }
-                }
-            ]
-        }
-    }
-    response = requests.post(url, json=payload, headers=headers, verify=False)
-    response.raise_for_status()
-    print(f"Policy group '{group_name}' associated to leaf switch {leaf_id}.")'''
-
-
 # List all policy group names in the fabric and prompt user to choose one
 def get_all_group_names(APIC_URL, token):
     url = f"{APIC_URL}/api/class/fabricLeNodePGrp.json"
@@ -184,52 +128,79 @@ def get_all_group_names(APIC_URL, token):
 
 
 def main():
-    csv_path = input("Enter path to CSV file with fabric credentials: ")
-    fabrics = read_fabric_credentials(csv_path)
+    # Default to creds.csv in the same directory
+    default_csv = os.path.join(os.path.dirname(__file__), 'creds.csv')
+    csv_path = input(f"Enter path to CSV file with fabric credentials (default: {default_csv}): ").strip()
+    if not csv_path:
+        csv_path = default_csv
+    
+    try:
+        fabrics = read_fabric_credentials(csv_path)
+    except FileNotFoundError:
+        print(f"Error: File '{csv_path}' not found.")
+        return
+    except Exception as e:
+        print(f"Error reading CSV file: {e}")
+        return
+    
     for fabric in fabrics:
         APIC_URL = fabric["APIC_URL"]
         USERNAME = fabric["USERNAME"]
         PASSWORD = fabric["PASSWORD"]
-        print(f"\n--- Processing fabric: {APIC_URL} ---")
+        print(f"\n{'='*60}")
+        print(f"Processing fabric: {APIC_URL}")
+        print(f"{'='*60}")
         try:
             token = login(APIC_URL, USERNAME, PASSWORD)
+            print("✓ Login successful")
         except Exception as e:
-            print(f"Login failed for {APIC_URL}: {e}")
+            print(f"✗ Login failed for {APIC_URL}: {e}")
             continue
+        
         groups = get_all_group_names(APIC_URL, token)
         if not groups:
-            print("No policy groups found in the fabric.")
+            print("✗ No policy groups found in the fabric.")
             continue
-        print("Available policy groups:")
+        
+        print("\nAvailable policy groups:")
         for idx, name in enumerate(groups, 1):
-            print(f"{idx}. {name}")
-        choices = input("Enter the numbers of the groups you want to use (comma separated): ")
+            print(f"  {idx}. {name}")
+        
+        choices = input("\nEnter the numbers of the groups you want to use (comma separated): ").strip()
         try:
             selected_indices = [int(x.strip())-1 for x in choices.split(',')]
             selected_groups = [groups[i] for i in selected_indices if 0 <= i < len(groups)]
         except (IndexError, ValueError):
-            print("Invalid selection. Skipping this fabric.")
+            print("✗ Invalid selection. Skipping this fabric.")
             continue
+        
         if not selected_groups:
-            print("No valid groups selected. Skipping this fabric.")
+            print("✗ No valid groups selected. Skipping this fabric.")
             continue
-        print(f"Selected groups: {', '.join(selected_groups)}")
-        print("creating policy")
+        
+        print(f"\n✓ Selected groups: {', '.join(selected_groups)}")
+        
+        # Check and create policy
         if not check_policy_exists(APIC_URL, token, policy_name):
+            print(f"\nCreating fabric node control policy '{policy_name}'...")
             create_fabric_node_control_policy(APIC_URL, token, policy_name)
         else:
-            print(f"Policy '{policy_name}' already exists. Skipping creation.")
-        print("outside creating")
-        proceed = input("Do you want to associate the policy to the selected groups? (y/n): ")
-        if proceed.strip().lower() != 'y':
+            print(f"\n✓ Policy '{policy_name}' already exists. Skipping creation.")
+        
+        # Ask to associate
+        proceed = input("\nDo you want to associate the policy to the selected groups? (y/n): ").strip().lower()
+        if proceed != 'y':
             print("Skipping policy-to-group association for this fabric.")
             continue
+        
+        print("\nAssociating policy to groups...")
         for group_name in selected_groups:
-            print(f"associating policy to group {group_name}")
-            associate_policy_to_group(APIC_URL, token, policy_name, group_name)
-            print(f"outside associating {group_name}")
-    # You can also repeat associate_group_to_switch for each group if needed
-
+            try:
+                associate_policy_to_group(APIC_URL, token, policy_name, group_name)
+            except Exception as e:
+                print(f"✗ Error associating to '{group_name}': {e}")
+        
+        print(f"\n✓ Completed processing for {APIC_URL}")
 
 if __name__ == "__main__":
     main()

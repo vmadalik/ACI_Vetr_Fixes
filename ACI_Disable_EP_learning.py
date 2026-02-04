@@ -1,6 +1,16 @@
+######################################
+# ACI Disable Remote EP Learning Script  
+# Flow of the code is as follows:
+# 1. Reads a CSV file containing multiple ACI fabric credentials.
+# 2. Logs into each fabric using the provided credentials.
+# 3. Checks if Remote EP Learning is disabled in Global Fabric Policies.
+# 4. If not disabled, prompts the user to disable it.
+# 5. Disables Remote EP Learning if the user agrees.
+########################################
 import requests
 import urllib3
 import csv
+import os
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -66,8 +76,21 @@ def ensure_disable_remote_ep_learning(APIC_URL, token):
         print("Remote EP Learning is already disabled.")
 
 def main():
-    csv_path = input("Enter path to CSV file with fabric credentials: ")
-    fabrics = read_fabric_credentials(csv_path)
+    # Default to creds.csv in the same directory
+    default_csv = os.path.join(os.path.dirname(__file__), 'creds.csv')
+    csv_path = input(f"Enter path to CSV file with fabric credentials (default: {default_csv}): ").strip()
+    if not csv_path:
+        csv_path = default_csv
+    
+    try:
+        fabrics = read_fabric_credentials(csv_path)
+    except FileNotFoundError:
+        print(f"Error: File '{csv_path}' not found.")
+        return
+    except Exception as e:
+        print(f"Error reading CSV file: {e}")
+        return
+    
     for fabric in fabrics:
         APIC_URL = fabric["APIC_URL"]
         USERNAME = fabric["USERNAME"]
